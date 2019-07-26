@@ -24,12 +24,13 @@ package nmp
 //////////////////////////////////////////////////////////////////////////////
 
 type ImageUploadReq struct {
-	NmpBase `codec:"-"`
-	Off     uint32 `codec:"off"`
-	Len     uint32 `codec:"len,omitempty"`
-	DataSha []byte `codec:"sha,omitempty"`
-	Upgrade bool   `codec:"upgrade,omitempty"`
-	Data    []byte `codec:"data"`
+	NmpBase   `codec:"-"`
+	Off       uint32 `codec:"off"`
+	Len       uint32 `codec:"len,omitempty"`
+	DataSha   []byte `codec:"sha,omitempty"`
+	Upgrade   bool   `codec:"upgrade,omitempty"`
+	LazyErase bool   `codec:"lazy_erase,omitempty"`
+	Data      []byte `codec:"data"`
 }
 
 type ImageUploadRsp struct {

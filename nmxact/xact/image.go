@@ -42,6 +42,7 @@ type ImageUploadCmd struct {
 	Data       []byte
 	StartOff   int
 	Upgrade    bool
+	LazyErase  bool
 	ProgressCb ImageUploadProgressFn
 }
 
@@ -67,8 +68,8 @@ func (r *ImageUploadResult) Status() int {
 	}
 }
 
-func buildImageUploadReq(imageSz int, hash []byte, upgrade bool, chunk []byte,
-	off int) *nmp.ImageUploadReq {
+func buildImageUploadReq(imageSz int, hash []byte, upgrade bool, lazy_erase bool,
+	chunk []byte, off int) *nmp.ImageUploadReq {
 
 	r := nmp.NewImageUploadReq()
 
@@ -76,6 +77,7 @@ func buildImageUploadReq(imageSz int, hash []byte, upgrade bool, chunk []byte,
 		r.Len = uint32(imageSz)
 		r.DataSha = hash
 		r.Upgrade = upgrade
+		r.LazyErase = lazy_erase
 	}
 	r.Off = uint32(off)
 	r.Data = chunk
@@ -90,11 +92,11 @@ func min(a, b int) int {
 	return b
 }
 
-func encodeUploadReq(s sesn.Sesn, hash []byte, upgrade bool, data []byte,
-	off int, chunklen int) ([]byte, error) {
+func encodeUploadReq(s sesn.Sesn, hash []byte, upgrade bool, lazy_erase bool,
+	data []byte, off int, chunklen int) ([]byte, error) {
 
-	r := buildImageUploadReq(len(data), hash, upgrade, data[off:off+chunklen],
-		off)
+	r := buildImageUploadReq(len(data), hash, upgrade, lazy_erase,
+		data[off:off+chunklen], off)
 	enc, err := mgmt.EncodeMgmt(s, r.Msg())
 	if err != nil {
 		return nil, err
@@ -109,8 +111,8 @@ func encodeUploadReq(s sesn.Sesn, hash []byte, upgrade bool, data []byte,
 	return enc, nil
 }
 
-func findChunkLen(s sesn.Sesn, hash []byte, upgrade bool, data []byte,
-	off int) (int, error) {
+func findChunkLen(s sesn.Sesn, hash []byte, upgrade bool, lazy_erase bool,
+	data []byte, off int) (int, error) {
 
 	// Let's start by encoding max allowed chunk len and we will see how many
 	// bytes we need to cut
@@ -118,7 +120,8 @@ func findChunkLen(s sesn.Sesn, hash []byte, upgrade bool, data []byte,
 
 	// Keep reducing the chunk size until the request fits the MTU.
 	for {
-		enc, err := encodeUploadReq(s, hash, upgrade, data, off, chunklen)
+		enc, err := encodeUploadReq(s, hash, upgrade, lazy_erase,
+			data, off, chunklen)
 		if err != nil {
 			return 0, err
 		}
@@ -135,8 +138,8 @@ func findChunkLen(s sesn.Sesn, hash []byte, upgrade bool, data []byte,
 	return chunklen, nil
 }
 
-func nextImageUploadReq(s sesn.Sesn, upgrade bool, data []byte, off int) (
-	*nmp.ImageUploadReq, error) {
+func nextImageUploadReq(s sesn.Sesn, upgrade bool, lazy_erase bool,
+	data []byte, off int) (*nmp.ImageUploadReq, error) {
 	var hash []byte = nil
 
 	// For 1st chunk we'll need valid data hash
@@ -146,7 +149,7 @@ func nextImageUploadReq(s sesn.Sesn, upgrade bool, data []byte, off int) (
 	}
 
 	// Find chunk length
-	chunklen, err := findChunkLen(s, hash, upgrade, data, off)
+	chunklen, err := findChunkLen(s, hash, upgrade, lazy_erase, data, off)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +158,8 @@ func nextImageUploadReq(s sesn.Sesn, upgrade bool, data []byte, off int) (
 	// fit we'll recalculate without hash
 	if off == 0 && chunklen < IMAGE_UPLOAD_MIN_1ST_CHUNK {
 		hash = nil
-		chunklen, err = findChunkLen(s, hash, upgrade, data, off)
+		chunklen, err = findChunkLen(s, hash, upgrade,
+			lazy_erase, data, off)
 		if err != nil {
 			return nil, err
 		}
@@ -169,7 +173,7 @@ func nextImageUploadReq(s sesn.Sesn, upgrade bool, data []byte, off int) (
 			s.MtuOut())
 	}
 
-	r := buildImageUploadReq(len(data), hash, upgrade,
+	r := buildImageUploadReq(len(data), hash, upgrade, lazy_erase,
 		data[off:off+chunklen], off)
 
 	// Request above should encode just fine since we calculate proper chunk
@@ -190,7 +194,8 @@ func (c *ImageUploadCmd) Run(s sesn.Sesn) (Result, error) {
 	res := newImageUploadResult()
 
 	for off := c.StartOff; off < len(c.Data); {
-		r, err := nextImageUploadReq(s, c.Upgrade, c.Data, off)
+		r, err := nextImageUploadReq(s, c.Upgrade, c.LazyErase,
+			c.Data, off)
 		if err != nil {
 			return nil, err
 		}
@@ -238,6 +243,7 @@ type ImageUpgradeCmd struct {
 	CmdBase
 	Data        []byte
 	NoErase     bool
+	LazyErase   bool
 	ProgressCb  ImageUploadProgressFn
 	LastOff     uint32
 	Upgrade     bool
@@ -251,8 +257,9 @@ type ImageUpgradeResult struct {
 
 func NewImageUpgradeCmd() *ImageUpgradeCmd {
 	return &ImageUpgradeCmd{
-		CmdBase: NewCmdBase(),
-		NoErase: false,
+		CmdBase:   NewCmdBase(),
+		NoErase:   false,
+		LazyErase: false,
 	}
 }
 
@@ -315,6 +322,7 @@ func (c *ImageUpgradeCmd) runUpload(s sesn.Sesn) (*ImageUploadResult, error) {
 		cmd.Data = c.Data
 		cmd.StartOff = startOff
 		cmd.Upgrade = c.Upgrade
+		cmd.LazyErase = c.LazyErase
 		cmd.ProgressCb = progressCb
 		cmd.SetTxOptions(c.TxOptions())
 
@@ -336,7 +344,7 @@ func (c *ImageUpgradeCmd) Run(s sesn.Sesn) (Result, error) {
 	var eres *ImageEraseResult = nil
 	var err error
 
-	if c.NoErase == false {
+	if c.NoErase == false && c.LazyErase == false {
 		eres, err = c.runErase(s)
 		if err != nil {
 			return nil, err

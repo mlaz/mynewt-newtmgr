@@ -43,6 +43,7 @@ var (
 )
 
 var noerase bool
+var lazyerase bool
 var upgrade bool
 
 func imageFlagsStr(image nmp.ImageStateEntry) string {
@@ -189,6 +190,9 @@ func imageUploadCmd(cmd *cobra.Command, args []string) {
 	c.Data = imageFile
 	if noerase == true {
 		c.NoErase = true
+	}
+	if lazyerase == true {
+		c.LazyErase = true
 	}
 	c.Upgrade = upgrade
 	c.ProgressBar = pb.StartNew(len(imageFile))
@@ -399,6 +403,10 @@ func imageCmd() *cobra.Command {
 	uploadCmd.PersistentFlags().BoolVarP(&noerase,
 		"noerase", "e", false,
 		"Don't send specific image erase command to start with")
+	uploadCmd.PersistentFlags().BoolVarP(&lazyerase,
+		"lazyerase", "z", false,
+		"Don't send specific image erase command to start with, "+
+			"erase a flash sector at a time")
 	uploadCmd.PersistentFlags().BoolVarP(&upgrade,
 		"upgrade", "u", false,
 		"Only allow the upload if the new image's version is greater than "+
